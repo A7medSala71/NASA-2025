@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exo-Sieve</title>
+  <link rel="stylesheet" href="index.css">
+</head>
+
+<body>
+  <!-- Home Content -->
+  <div class="header-container content active" id="homeContent">
+    <h1 class="site-title">EXO-SIEVE</h1>
+    <p class="site-subtitle">Two-Stage AI Pipeline for Exoplanet Discovery</p>
+    <p class="site-description">
+      Combining unsupervised anomaly detection with intelligent classification
+      to discover exoplanets from raw light curve data. From signal to discovery,
+      powered by artificial intelligence.
+    </p>
+    <div class="cta-buttons">
+      <a href="#" class="btn btn-primary" id="getStartedBtn" aria-label="Get Started with Exo-Sieve">Get Started</a>
+      <a href="#" class="btn btn-secondary" aria-label="Learn More about Exo-Sieve">Learn More</a>
+    </div>
+  </div>
+
+  <!-- Dashboard Content -->
+  <div class="dashboard-container content" id="dashboardContent">
+    <button class="back-btn" id="backBtn" aria-label="Back to Home">← Back</button>
+
+    <h2 class="dashboard-title">Upload Data</h2>
+    <p class="dashboard-subtitle">Upload your light curve data or try a sample from NASA</p>
+
+    <div class="upload-section">
+      <div class="upload-area" id="uploadArea" role="region" aria-label="File Upload Area">
+        <div class="upload-icon">📁</div>
+        <p class="upload-text">Drag & drop your CSV file here</p>
+        <p class="upload-hint">or click to browse (CSV only; FITS support coming soon)</p>
+        <input type="file" id="fileInput" class="file-input" accept=".csv" aria-label="Upload CSV File">
+      </div>
+    </div>
+
+    <div class="divider">
+      <span>OR</span>
+    </div>
+
+    <div class="sample-data-section">
+      <p class="sample-data-title">Try a sample light curve from NASA</p>
+      <div class="sample-buttons">
+        <button class="sample-btn" data-sample="kepler" aria-label="Load Kepler Sample Data">Kepler Sample</button>
+        <button class="sample-btn" data-sample="tess" aria-label="Load TESS Sample Data">TESS Sample</button>
+        <button class="sample-btn" data-sample="k2" aria-label="Load K2 Sample Data">K2 Sample</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- About Content -->
+  <div class="about-container content" id="aboutContent">
+    <button class="back-btn" id="aboutBackBtn" aria-label="Back to Home">← Back</button>
+
+    <h2 class="about-title">About Exo-Sieve</h2>
+    <p class="about-subtitle">AI-Driven Exoplanet Discovery</p>
+
+    <div class="about-text">
+      <p>
+        Exo-Sieve is a two-stage artificial intelligence pipeline designed
+        for exoplanet discovery. It combines unsupervised anomaly detection
+        with intelligent classification, filtering through raw light curve
+        data to identify promising planetary candidates.
+      </p>
+      <p>
+        Traditional detection methods rely on manual analysis and large-scale
+        filtering, but Exo-Sieve automates the process, reducing noise and
+        increasing efficiency. By leveraging deep learning and anomaly detection,
+        the system can highlight rare events that may indicate the presence of
+        exoplanets.
+      </p>
+      <p>
+        The project is inspired by NASA's missions, including <strong>Kepler</strong>,
+        <strong>K2</strong>, and <strong>TESS</strong>, providing scientists and enthusiasts
+        with an accessible platform to explore cosmic data.
+      </p>
+    </div>
+
+    <div class="about-highlights">
+      <div class="highlight-card">
+        <h3>Stage 1</h3>
+        <p>Anomaly detection filters unusual signals from noisy data.</p>
+      </div>
+      <div class="highlight-card">
+        <h3>Stage 2</h3>
+        <p>AI classifier evaluates filtered signals for exoplanet signatures.</p>
+      </div>
+      <div class="highlight-card">
+        <h3>Impact</h3>
+        <p>Speeds up discovery and reduces false positives in astronomy research.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Output Content -->
+  <div class="output-container content" id="outputContent">
+    <div class="output-header">
+      <button class="back-btn" id="outputBackBtn" aria-label="Back to Dashboard">← Back</button>
+      <h2 class="output-title">Analysis Results</h2>
+    </div>
+
+    <div class="output-body">
+      <!-- Hyperparameters Panel -->
+      <div class="hyperparam-panel">
+        <h3 class="section-title">Hyperparameter Tweaking</h3>
+        <div class="param-columns">
+          <div class="param-column sliders">
+            <!-- n_estimators -->
+            <div class="param-control">
+              <label for="nEstimators">Number of Estimators</label>
+              <input type="range" id="nEstimators" min="100" max="1000" step="10" value="200"
+                aria-label="Number of Estimators">
+              <span id="nEstimatorsValue">200</span>
+            </div>
+
+            <!-- num_leaves -->
+            <div class="param-control">
+              <label for="numLeaves">Number of Leaves</label>
+              <input type="range" id="numLeaves" min="20" max="50" step="1" value="31" aria-label="Number of Leaves">
+              <span id="numLeavesValue">31</span>
+            </div>
+             <!-- learning_rate -->
+            <div class="param-control">
+              <label for="learningRate">Learning Rate</label>
+              <select id="learningRate" aria-label="Learning Rate">
+                <option value="0.01">0.01</option>
+                <option value="0.05">0.05</option>
+                <option value="0.1" selected>0.1</option>
+                <option value="0.2">0.2</option>
+              </select>
+            </div>
+
+          </div>
+
+          <div class="param-column selects">
+           
+            <!-- max_depth -->
+            <div class="param-control">
+              <label for="maxDepth">Max Depth</label>
+              <select id="maxDepth" aria-label="Max Depth">
+                <option value="-1">-1 (Unlimited)</option>
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="30">30</option>
+              </select>
+            </div>
+
+            <!-- reg_alpha -->
+            <div class="param-control">
+              <label for="regAlpha">L1 Regularization (reg_alpha)</label>
+              <select id="regAlpha" aria-label="Reg Alpha">
+                <option value="0">0</option>
+                <option value="0.1">0.1</option>
+                <option value="0.5">0.5</option>
+              </select>
+            </div>
+
+            <!-- reg_lambda -->
+            <div class="param-control">
+              <label for="regLambda">L2 Regularization (reg_lambda)</label>
+              <select id="regLambda" aria-label="Reg Lambda">
+                <option value="0">0</option>
+                <option value="0.1">0.1</option>
+                <option value="0.5">0.5</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary" id="applyParamsBtn" aria-label="Apply Hyperparameters">Apply</button>
+      </div>
+
+      <!-- Results Panel -->
+      <div class="results-panel">
+        <div class="result-section">
+          <h2 class="result-title">Prediction Result</h2>
+          <p class="result-status" id="resultStatus">Awaiting file...</p>
+          <div id="resultsDiv" class="results-div" role="region" aria-label="Prediction Results">
+            <!-- Hugging Face API output will be displayed here -->
+          </div>
+        </div>
+
+        <div class="explanation-section">
+          <h3>Key Features Supporting This Prediction:</h3>
+          <pre id="detailedExplanationText"></pre>
+
+          <h3>Explanation:</h3>
+          <p id="modelExplanationText"></p>
+        </div>
+      </div>
+
+      <!-- Bulk views will be dynamically inserted here -->
+    </div>
+  </div>
+
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script type="module" src="https://unpkg.com/@splinetool/viewer@1.10.73/build/spline-viewer.js"></script>
+  <spline-viewer url="https://prod.spline.design/058oVd-TrQfXzvgC/scene.splinecode"></spline-viewer>
+  <script type="module" src="index.js"></script>
+</body>
+
+</html>
