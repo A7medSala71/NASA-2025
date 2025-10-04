@@ -19,10 +19,3 @@ Thumbs.db
 dist/
 build/
 out/
-
-# Ignore other project folders (keep only the main frontend files for Vercel)
-arcadeclassic/
-Exoplanet-classifier/
-k2-nasa-2025/
-Kepler-Exoplanet-Classifier/
-medodica/
