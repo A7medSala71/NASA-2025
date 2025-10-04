@@ -26,7 +26,6 @@ const learnMoreBtn = document.querySelector('.btn-secondary');
 const aboutContent = document.getElementById('aboutContent');
 const aboutBackBtn = document.getElementById('aboutBackBtn');
 const outputContent = document.getElementById('outputContent');
-const outputBackBtn = document.getElementById('outputBackBtn');
 
 // Hugging Face API token
 const HF_API_TOKEN = "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";
@@ -83,16 +82,11 @@ let bulkResults = {
     model: '',
     display: '',
     results: [],
-    summary: {
-        confirmed: 0,
-        candidate: 0,
-        'false positive': 0
-    }
+    summary: { confirmed: 0, candidate: 0, 'false positive': 0 }
 };
 
-// Parse CSV string into headers and data
+// CSV parsing
 function parseCSV(csvString) {
-    console.log('Parsing CSV...');
     const regex = /,(?=(?:(?:[^"]*"){2})*[^"]*$)/g;
     const lines = csvString.trim().split(/\r?\n/);
     const headers = lines[0].split(regex).map(h => h.replace(/^"|"$/g, '').trim());
@@ -103,17 +97,13 @@ function parseCSV(csvString) {
             return obj;
         }, {});
     });
-    console.log('CSV parsed:', { headers, dataRows: data.length });
     return { headers, data };
 }
 
-// Find the best model based on CSV headers
+// Find best model based on headers
 function findSuitableModel(headers) {
-    console.log('Finding suitable model for headers:', headers);
     const headerSet = new Set(headers.map(h => h.toLowerCase()).filter(h => !h.startsWith("unnamed")));
-    let bestModel = null;
-    let maxMatchCount = 0;
-
+    let bestModel = null, maxMatchCount = 0;
     Object.entries(MODELS).forEach(([modelName, { features }]) => {
         const lowerFeatures = features.map(f => f.toLowerCase());
         const matchCount = lowerFeatures.filter(f => headerSet.has(f)).length;
@@ -122,787 +112,236 @@ function findSuitableModel(headers) {
             maxMatchCount = matchCount;
         }
     });
-
-    console.log('Selected model:', bestModel);
     return maxMatchCount > 0 ? bestModel : null;
 }
 
-// Query Hugging Face API
+// Query Hugging Face
 async function queryHuggingFace(modelKey, data) {
     const inputs = {};
     MODELS[modelKey].features.forEach(feature => {
         inputs[feature] = parseFloat(data[feature]) || 0;
     });
-    console.log('Prepared inputs for API:', inputs);
 
     if (useGradio && Client) {
         try {
-            console.log('Attempting Gradio client connection to:', MODELS[modelKey].endpoint);
-            const client = await Client.connect(MODELS[modelKey].endpoint, {
-                hf_token: HF_API_TOKEN
-            });
-            console.log('Gradio client connected');
+            const client = await Client.connect(MODELS[modelKey].endpoint, { hf_token: HF_API_TOKEN });
             const result = await client.predict("/classify_exoplanet", inputs);
-            console.log('Gradio API response:', result.data);
             return result.data;
         } catch (error) {
-            console.error('Gradio client error:', error);
-            showToast('Gradio client failed. Falling back to direct API call.', 'warning');
             useGradio = false;
         }
     }
 
-    console.log('Using fetch fallback for API call');
-    try {
-        const url = `https://api-inference.huggingface.co/models/${MODELS[modelKey].endpoint}`;
-        const response = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${HF_API_TOKEN}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({ inputs })
-        });
-
-        if (!response.ok) {
-            throw new Error(`Fetch API error: ${response.status} ${response.statusText}`);
-        }
-
-        const result = await response.json();
-        console.log('Fetch API response:', result);
-        return result;
-    } catch (error) {
-        console.error('Fetch API error:', error);
-        throw new Error(`Hugging Face API error: ${error.message}`);
-    }
+    const url = `https://api-inference.huggingface.co/models/${MODELS[modelKey].endpoint}`;
+    const response = await fetch(url, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${HF_API_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ inputs })
+    });
+    if (!response.ok) throw new Error(`Fetch API error: ${response.status}`);
+    return await response.json();
 }
 
-// Process CSV for model inference - now handles multiple rows
+// Process CSV for model inference
 function processCSVForModel(csvString) {
     const { headers, data } = parseCSV(csvString);
     const model = findSuitableModel(headers);
-
-    if (!model) {
-        throw new Error('No suitable model found for the provided CSV features.');
-    }
-
-    if (data.length === 0) {
-        throw new Error('CSV file contains no data rows.');
-    }
-
-    // Validate that all rows have required features
+    if (!model) throw new Error('No suitable model found.');
     const requiredFeatures = MODELS[model].features;
     const validRows = data.map((row, index) => {
-        const missingFeatures = requiredFeatures.filter(
-            feature => !(feature in row) || row[feature] === null || row[feature] === ''
-        );
-        return {
-            index,
-            row,
-            isValid: missingFeatures.length === 0,
-            missingFeatures
-        };
+        const missingFeatures = requiredFeatures.filter(f => !(f in row) || row[f] === null || row[f] === '');
+        return { index, row, isValid: missingFeatures.length === 0, missingFeatures };
     });
-
-    return {
-        model: model,
-        display: MODELS[model].display,
-        data: validRows
-    };
+    return { model, display: MODELS[model].display, data: validRows };
 }
 
-// Parse explanation text from model
-function parseExplanation(explanationText) {
-    const lines = explanationText.split('\n').filter(line => line.trim());
-    let keyFeatures = [];
-    let explanation = '';
-    let isExplanationSection = false;
-
-    lines.forEach(line => {
-        if (line.startsWith('### Explanation:')) {
-            isExplanationSection = true;
-            explanation = line.replace('### Explanation:', '').trim();
-        } else if (isExplanationSection) {
-            explanation += ' ' + line.trim();
-        } else if (line.startsWith('- **')) {
-            const match = line.match(/- \*\*([^\*]+)\*\*: value = ([^,]+), gain = ([^\(]+)\((.+)\)/);
-            if (match) {
-                keyFeatures.push(`${match[1]}: Value = ${match[2]}, Gain = ${match[3].trim()} (${match[4]})`);
-            } else {
-                keyFeatures.push(line);
-            }
-        }
-    });
-
-    explanation = explanation.replace(/\*\*([^\*]+)\*\*/g, '<strong>$1</strong>');
-
-    return {
-        keyFeatures: keyFeatures.join('\n'),
-        explanation: explanation.trim() || 'No explanation provided.'
-    };
-}
-
-// Parse prediction results
+// Parse prediction result
 function parsePrediction(predictions, rowData, rowIndex) {
-    let result = {
-        rowIndex: rowIndex + 1,
-        rowData: rowData,
-        label: 'Unknown',
-        confidence: 0,
-        confidences: [],
-        keyFeatures: '',
-        explanation: 'No explanation provided.',
-        resultClass: ''
-    };
-
+    const result = { rowIndex: rowIndex+1, rowData, label: 'Unknown', confidence: 0, confidences: [], keyFeatures: '', explanation: 'No explanation', resultClass: '' };
     if (Array.isArray(predictions) && predictions.length >= 2) {
         const classification = predictions[1];
         if (classification.label && classification.confidences) {
             result.label = classification.label;
-            result.confidence = classification.confidences.find(c => c.label === classification.label)?.confidence || 0;
+            result.confidence = classification.confidences.find(c=>c.label===classification.label)?.confidence || 0;
             result.confidences = classification.confidences;
-            result.resultClass = classification.label.toLowerCase().replace(/ /g, '-');
+            result.resultClass = classification.label.toLowerCase().replace(/ /g,'-');
         }
-
         if (predictions[2]) {
-            const parsed = parseExplanation(predictions[2]);
-            result.keyFeatures = parsed.keyFeatures;
-            result.explanation = parsed.explanation;
+            const lines = predictions[2].split('\n').filter(l=>l.trim());
+            const keyFeatures = [];
+            let explanation = '', isExplanation=false;
+            lines.forEach(line=>{
+                if(line.startsWith('### Explanation:')) { isExplanation=true; explanation=line.replace('### Explanation:','').trim(); }
+                else if(isExplanation) explanation+=' '+line.trim();
+                else keyFeatures.push(line);
+            });
+            result.keyFeatures = keyFeatures.join('\n');
+            result.explanation = explanation;
         }
     }
-
     return result;
 }
 
-// Show loading overlay
-function showLoadingOverlay(message = 'Processing...') {
+// Loading overlay
+function showLoadingOverlay(msg='Processing...') {
     let overlay = document.getElementById('loadingOverlay');
-    if (!overlay) {
-        overlay = document.createElement('div');
-        overlay.id = 'loadingOverlay';
-        overlay.className = 'loading-overlay';
-        overlay.innerHTML = `
-            <div class="spinner"></div>
-            <p>${message}</p>
-        `;
+    if(!overlay){
+        overlay=document.createElement('div');
+        overlay.id='loadingOverlay';
+        overlay.className='loading-overlay';
+        overlay.innerHTML=`<div class="spinner"></div><p>${msg}</p>`;
         document.body.appendChild(overlay);
-    } else {
-        overlay.querySelector('p').textContent = message;
-    }
-    overlay.style.display = 'flex';
+    } else overlay.querySelector('p').textContent=msg;
+    overlay.style.display='flex';
 }
-
-// Hide loading overlay
 function hideLoadingOverlay() {
-    const overlay = document.getElementById('loadingOverlay');
-    if (overlay) {
-        overlay.style.display = 'none';
-    }
+    const overlay=document.getElementById('loadingOverlay');
+    if(overlay) overlay.style.display='none';
 }
 
-// Handle CSV input (file or sample) - now processes all rows
-async function handleCSVInput(csvString, source = 'file') {
-    console.time('Processing');
-    console.log('Handling CSV input from:', source);
-    
-    try {
-        const { model, display, data } = processCSVForModel(csvString);
-        currentEndpoint = MODELS[model].endpoint;  // Set the current endpoint here
-
-        // Check for invalid rows and show warning
-        const invalidRows = data.filter(row => !row.isValid);
-        if (invalidRows.length > 0) {
-            const invalidRowNumbers = invalidRows.map(row => row.index + 1).join(', ');
-            showToast(`Warning: Rows ${invalidRowNumbers} contain missing data and will be skipped.`, 'warning');
-        }
-        
-        // Check if it's a single row - handle differently
-        if (data.length === 1) {
-            const singleRow = data[0];
-            if (!singleRow.isValid) {
-                throw new Error(`Row 1 is missing required features: ${singleRow.missingFeatures.join(', ')}`);
-            }
-
-            showLoadingOverlay('Analyzing single row...');
-
-            try {
-                const predictions = await queryHuggingFace(model, singleRow.row);
-                const result = parsePrediction(predictions, singleRow.row, 0);
-                
-                // Show single result directly (no bulk view)
-                showSingleResultDirect(result, display);
-                showToast('Analysis complete!', 'success');
-            } catch (error) {
-                console.error('Error processing row:', error);
-                showToast(error.message, 'error');
-            } finally {
-                hideLoadingOverlay();
-            }
-            
-            console.timeEnd('Processing');
-            return;
-        }
-        
-        // Reset bulk results for multiple rows
-        bulkResults = {
-            model: model,
-            display: display,
-            results: [],
-            summary: {
-                confirmed: 0,
-                candidate: 0,
-                'false positive': 0
-            }
-        };
-
-        // Show bulk summary view immediately
-        showBulkSummary(display, data.length);
-
-        // Process each row
-        for (let i = 0; i < data.length; i++) {
-            const rowData = data[i];
-            
-            if (!rowData.isValid) {
-                console.warn(`Skipping row ${i + 1}: Missing features`);
-                continue;
-            }
-
-            try {
-                const predictions = await queryHuggingFace(model, rowData.row);
-                const result = parsePrediction(predictions, rowData.row, i);
-                bulkResults.results.push(result);
-                
-                // Update summary
-                const label = result.label.toLowerCase();
-                if (label.includes('confirmed')) {
-                    bulkResults.summary.confirmed++;
-                } else if (label.includes('candidate')) {
-                    bulkResults.summary.candidate++;
-                } else if (label.includes('false')) {
-                    bulkResults.summary['false positive']++;
-                }
-
-                // Update the display
-                updateBulkSummary();
-                
-            } catch (error) {
-                console.error(`Error processing row ${i + 1}:`, error);
-            }
-
-            // Small delay to avoid rate limiting
-            if (i < data.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 500));
-            }
-        }
-
-        // Hide processing status after all rows are processed
-        const processingStatus = document.getElementById('processingStatus');
-        if (processingStatus) {
-            processingStatus.style.display = 'none';
-        }
-
-        showToast(`Analysis complete! Processed ${bulkResults.results.length} rows.`, 'success');
-        
-    } catch (error) {
-        console.error('Error in handleCSVInput:', error);
-        showToast(error.message, 'error');
-    }
-    console.timeEnd('Processing');
-}
-
-// Show bulk summary view
-function showBulkSummary(modelDisplay, totalRows) {
-    console.log('Showing bulk summary for model:', modelDisplay);
-    homeContent.classList.remove('active');
-    dashboardContent.classList.remove('active');
-    aboutContent.classList.remove('active');
-    outputContent.classList.add('active');
-    outputContent.style.display = 'block';
-
-    // Hide hyperparameters and results panels
-    // const hyperparam = document.querySelector('.hyperparam-panel');
-    // const resultsPanel = document.querySelector('.results-panel');
-    // if (hyperparam) hyperparam.style.display = 'none';
-    // if (resultsPanel) resultsPanel.style.display = 'none';
-
-    // Hide other views
-    const detailView = document.getElementById('bulkDetailView');
-    const singleView = document.getElementById('singleResultView');
-    if (detailView) detailView.style.display = 'none';
-    if (singleView) singleView.style.display = 'none';
-
-    // Create or update bulk summary view
-    let bulkView = document.getElementById('bulkSummaryView');
-    if (!bulkView) {
-        bulkView = document.createElement('div');
-        bulkView.id = 'bulkSummaryView';
-        bulkView.className = 'bulk-summary-view';
-        document.querySelector('.output-body').appendChild(bulkView);
-    }
-
-    bulkView.innerHTML = `
-        <p class="bulk-subtitle">Model: ${modelDisplay} | Total Rows: ${totalRows}</p>
-        
-        <div class="summary-cards">
-            <div class="summary-card confirmed-card" data-category="confirmed">
-                <div class="card-icon">✓</div>
-                <div class="card-label">Confirmed Exoplanets</div>
-                <div class="card-count" id="confirmedCount">0</div>
-                <div class="card-action">Click to view details</div>
-            </div>
-            
-            <div class="summary-card candidate-card" data-category="candidate">
-                <div class="card-icon">?</div>
-                <div class="card-label">Candidates</div>
-                <div class="card-count" id="candidateCount">0</div>
-                <div class="card-action">Click to view details</div>
-            </div>
-            
-            <div class="summary-card false-positive-card" data-category="false positive">
-                <div class="card-icon">✗</div>
-                <div class="card-label">False Positives</div>
-                <div class="card-count" id="falsePositiveCount">0</div>
-                <div class="card-action">Click to view details</div>
-            </div>
-        </div>
-        
-        <div class="processing-status" id="processingStatus">
-            <div class="spinner"></div>
-            <p>Processing rows... This may take a few minutes.</p>
-        </div>
-    `;
-
-    bulkView.style.display = 'block';
-
-    // Add click listeners to cards
-    const cards = bulkView.querySelectorAll('.summary-card');
-    cards.forEach(card => {
-        card.addEventListener('click', () => {
-            const category = card.dataset.category;
-            const count = bulkResults.summary[category];
-            if (count > 0) {
-                showBulkDetails(category);
-            } else {
-                showToast(`No ${category} results yet`, 'warning');
-            }
-        });
-    });
-}
-
-// Update bulk summary counts
-function updateBulkSummary() {
-    const confirmedEl = document.getElementById('confirmedCount');
-    const candidateEl = document.getElementById('candidateCount');
-    const falsePositiveEl = document.getElementById('falsePositiveCount');
-    
-    if (confirmedEl) confirmedEl.textContent = bulkResults.summary.confirmed;
-    if (candidateEl) candidateEl.textContent = bulkResults.summary.candidate;
-    if (falsePositiveEl) falsePositiveEl.textContent = bulkResults.summary['false positive'];
-}
-
-// Show detailed results for a category
-function showBulkDetails(category) {
-    console.log('Showing details for category:', category);
-    
-    // Filter results by category
-    const filteredResults = bulkResults.results.filter(r => {
-        const label = r.label.toLowerCase();
-        if (category === 'confirmed') return label.includes('confirmed');
-        if (category === 'candidate') return label.includes('candidate');
-        if (category === 'false positive') return label.includes('false');
-        return false;
-    });
-
-    if (filteredResults.length === 0) {
-        showToast(`No results for ${category}`, 'warning');
-        return;
-    }
-
-    // Hide summary view
-    const summaryView = document.getElementById('bulkSummaryView');
-    if (summaryView) summaryView.style.display = 'none';
-
-    const singleView = document.getElementById('singleResultView');
-    if (singleView) singleView.style.display = 'none';
-
-    // Create or update detail view
-    let detailView = document.getElementById('bulkDetailView');
-    if (!detailView) {
-        detailView = document.createElement('div');
-        detailView.id = 'bulkDetailView';
-        detailView.className = 'bulk-detail-view';
-        document.querySelector('.output-body').appendChild(detailView);
-    }
-
-    detailView.innerHTML = `
-        <h2 class="detail-title">${category.charAt(0).toUpperCase() + category.slice(1)} Results</h2>
-        <p class="detail-subtitle">Found ${filteredResults.length} result(s)</p>
-        
-        <div class="results-table">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Row #</th>
-                        <th>Classification</th>
-                        <th>Confidence</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${filteredResults.map(result => `
-                        <tr class="result-row" data-row-index="${result.rowIndex}">
-                            <td>${result.rowIndex}</td>
-                            <td><span class="label-badge ${result.resultClass}">${result.label}</span></td>
-                            <td>${(result.confidence * 100).toFixed(2)}%</td>
-                            <td><button class="view-btn" data-row-index="${result.rowIndex}" data-category="${category}">View Details</button></td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-    `;
-
-    detailView.style.display = 'block';
-
-    // Add click listeners to view buttons
-    const viewBtns = detailView.querySelectorAll('.view-btn');
-    viewBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const rowIndex = parseInt(btn.dataset.rowIndex);
-            const category = btn.dataset.category;
-            showSingleResult(rowIndex, category);
-        });
-    });
-}
-
-// Show single result details
-function showSingleResult(rowIndex, category) {
-    console.log('Showing single result for row:', rowIndex);
-    
-    const result = bulkResults.results.find(r => r.rowIndex === rowIndex);
-    if (!result) {
-        showToast('Result not found', 'error');
-        return;
-    }
-
-    // Hide detail view
-    const detailView = document.getElementById('bulkDetailView');
-    if (detailView) detailView.style.display = 'none';
-
-    const summaryView = document.getElementById('bulkSummaryView');
-    if (summaryView) summaryView.style.display = 'none';
-
-    // Create or update single result view
-    let singleView = document.getElementById('singleResultView');
-    if (!singleView) {
-        singleView = document.createElement('div');
-        singleView.id = 'singleResultView';
-        singleView.className = 'single-result-view';
-        document.querySelector('.output-body').appendChild(singleView);
-    }
-
-    singleView.dataset.category = category;
-
-    singleView.innerHTML = `
-        <h2 class="single-result-title">Row ${result.rowIndex} Details</h2>
-        
-        <div class="single-result-content">
-            <div class="result-section">
-                <h2 class="result-title">Prediction Result</h2>
-                <p class="result-status ${result.resultClass}">${result.label} (${(result.confidence * 100).toFixed(2)}%)</p>
-                
-                <div class="confidence-breakdown">
-                    <h3>Confidence Breakdown:</h3>
-                    ${result.confidences.map(c => `
-                        <div class="confidence-bar">
-                            <span class="confidence-label">${c.label}</span>
-                            <div class="confidence-progress">
-                                <div class="confidence-fill" style="width: ${(c.confidence * 100).toFixed(2)}%"></div>
-                            </div>
-                            <span class="confidence-value">${(c.confidence * 100).toFixed(2)}%</span>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-
-            <div class="explanation-section">
-                <h3>Key Features Supporting This Prediction:</h3>
-                <pre id="detailedExplanationText">${result.keyFeatures || 'No key features available.'}</pre>
-
-                <h3>Explanation:</h3>
-                <p id="modelExplanationText">${result.explanation}</p>
-            </div>
-        </div>
-    `;
-
-    singleView.style.display = 'block';
-}
-
-// Show single result directly (for single-row CSV)
-function showSingleResultDirect(result, modelDisplay) {
-    console.log('Showing single result directly');
-    
-    homeContent.classList.remove('active');
-    dashboardContent.classList.remove('active');
-    aboutContent.classList.remove('active');
-    outputContent.classList.add('active');
-    outputContent.style.display = 'block';
-
-    // Hide hyperparameters and results panels and bulk views
-    // const hyperparam = document.querySelector('.hyperparam-panel');
-    // const resultsPanel = document.querySelector('.results-panel');
-    const summaryView = document.getElementById('bulkSummaryView');
-    const detailView = document.getElementById('bulkDetailView');
-    
-    // if (hyperparam) hyperparam.style.display = 'none';
-    // if (resultsPanel) resultsPanel.style.display = 'none';
-    if (summaryView) summaryView.style.display = 'none';
-    if (detailView) detailView.style.display = 'none';
-
-    // Create or update single result view
-    let singleView = document.getElementById('singleResultView');
-    if (!singleView) {
-        singleView = document.createElement('div');
-        singleView.id = 'singleResultView';
-        singleView.className = 'single-result-view';
-        document.querySelector('.output-body').appendChild(singleView);
-    }
-
-    singleView.dataset.category = 'direct'; // Mark as direct (not from bulk)
-
-    singleView.innerHTML = `
-        
-        <div class="single-result-content">
-            <div class="result-section">
-                <h2 class="result-title">Prediction Result</h2>
-                <p class="result-status ${result.resultClass}">${result.label} (${(result.confidence * 100).toFixed(2)}%)</p>
-                
-                <div class="confidence-breakdown">
-                    <h3>Confidence Breakdown:</h3>
-                    ${result.confidences.map(c => `
-                        <div class="confidence-bar">
-                            <span class="confidence-label">${c.label}</span>
-                            <div class="confidence-progress">
-                                <div class="confidence-fill" style="width: ${(c.confidence * 100).toFixed(2)}%"></div>
-                            </div>
-                            <span class="confidence-value">${(c.confidence * 100).toFixed(2)}%</span>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-
-            <div class="explanation-section">
-                <h3>Key Features Supporting This Prediction:</h3>
-                <pre id="detailedExplanationText">${result.keyFeatures || 'No key features available.'}</pre>
-
-                <h3>Explanation:</h3>
-                <p id="modelExplanationText">${result.explanation}</p>
-            </div>
-        </div>
-    `;
-
-    singleView.style.display = 'block';
-}
-
-// Show toast notification
-function showToast(message, type = "success") {
-    console.log('Showing toast:', message, type);
-    let container = document.getElementById("toastContainer");
+// Toast
+function showToast(message, type="success") {
+    let container=document.getElementById("toastContainer
     if (!container) {
-        container = document.createElement('div');
-        container.id = 'toastContainer';
+        container = document.createElement("div");
+        container.id = "toastContainer";
+        container.style.position = "fixed";
+        container.style.bottom = "20px";
+        container.style.right = "20px";
+        container.style.zIndex = "9999";
         document.body.appendChild(container);
     }
+
     const toast = document.createElement("div");
     toast.className = `toast ${type}`;
+    toast.style.background = type === "success" ? "#4CAF50" : type === "warning" ? "#ff9800" : "#f44336";
+    toast.style.color = "#fff";
+    toast.style.padding = "10px 20px";
+    toast.style.marginTop = "10px";
+    toast.style.borderRadius = "5px";
+    toast.style.boxShadow = "0 2px 6px rgba(0,0,0,0.3)";
+    toast.style.fontSize = "14px";
     toast.textContent = message;
+
     container.appendChild(toast);
-    setTimeout(() => { toast.remove(); }, 5000);
+    setTimeout(() => {
+        toast.remove();
+    }, 4000);
 }
 
-// Event listeners
-initializeGradioClient();
-
-getStartedBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    homeContent.style.display = 'none';
-    dashboardContent.classList.add('active');
-});
-
-backBtn.addEventListener('click', () => {
-    dashboardContent.classList.remove('active');
-    setTimeout(() => {
-        homeContent.style.display = 'block';
-    }, 300);
-});
-
-uploadArea.addEventListener('click', () => {
-    fileInput.click();
-});
-
-fileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
-        console.log('File selected:', file.name);
-        showToast(`File "${file.name}" selected! Running analysis...`);
-        handleUploadedFile(file);
-    }
-});
-
-uploadArea.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    uploadArea.classList.add('dragover');
-});
-
-uploadArea.addEventListener('dragleave', () => {
-    uploadArea.classList.remove('dragover');
-});
-
-uploadArea.addEventListener('drop', (e) => {
-    e.preventDefault();
-    uploadArea.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) {
-        console.log('File dropped:', file.name);
-        showToast(`File "${file.name}" dropped! Running analysis...`);
-        handleUploadedFile(file);
-    }
-});
-
-sampleBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-        const sample = btn.dataset.sample;
-        console.log(`Loading ${sample} sample data...`);
-        if (SAMPLE_CSV[sample]) {
-            showToast(`Loading ${sample.toUpperCase()} sample data...`);
-            handleCSVInput(SAMPLE_CSV[sample], `${sample.toUpperCase()} sample`);
-        } else {
-            showToast(`No sample data available for ${sample.toUpperCase()}.`, 'error');
-        }
-    });
-});
-
-learnMoreBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    homeContent.style.display = 'none';
-    dashboardContent.classList.remove('active');
-    aboutContent.classList.add('active');
-});
-
-aboutBackBtn.addEventListener('click', () => {
-    aboutContent.classList.remove('active');
-    setTimeout(() => {
-        homeContent.style.display = 'block';
-    }, 300);
-});
-
-outputBackBtn.addEventListener('click', () => {
-    const bulkSummaryView = document.getElementById('bulkSummaryView');
-    const bulkDetailView = document.getElementById('bulkDetailView');
-    const singleResultView = document.getElementById('singleResultView');
-
-    if (singleResultView && singleResultView.style.display !== 'none') {
-        const category = singleResultView.dataset.category;
-        
-        // If it's a direct single result (not from bulk), go back to dashboard
-        if (category === 'direct') {
-            outputContent.classList.remove('active');
-            outputContent.style.display = 'none';
-            singleResultView.style.display = 'none';
-            setTimeout(() => {
-                dashboardContent.classList.add('active');
-            }, 300);
-        } else {
-            // From single result → back to detail view
-            if (category) {
-                showBulkDetails(category);
-            }
-        }
-    } else if (bulkDetailView && bulkDetailView.style.display !== 'none') {
-        // From detail view → back to summary
-        bulkDetailView.style.display = 'none';
-        if (bulkSummaryView) bulkSummaryView.style.display = 'block';
-    } else {
-        // From summary → back to dashboard
-        outputContent.classList.remove('active');
-        outputContent.style.display = 'none';
-        setTimeout(() => {
-            dashboardContent.classList.add('active');
-        }, 300);
-    }
-});
-
-function handleUploadedFile(file) {
-    console.log('Handling uploaded file:', file.name);
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-        showToast('Please upload a valid CSV file.', 'error');
+// Display output in table
+function displayResults(results) {
+    outputContent.innerHTML = "";
+    if (!results || results.length === 0) {
+        outputContent.innerHTML = "<p>No results found.</p>";
         return;
     }
+
+    const table = document.createElement("table");
+    table.style.width = "100%";
+    table.style.borderCollapse = "collapse";
+    const headerRow = document.createElement("tr");
+
+    Object.keys(results[0]).forEach(key => {
+        const th = document.createElement("th");
+        th.textContent = key;
+        th.style.border = "1px solid #ddd";
+        th.style.padding = "8px";
+        th.style.background = "#f2f2f2";
+        headerRow.appendChild(th);
+    });
+    table.appendChild(headerRow);
+
+    results.forEach(result => {
+        const row = document.createElement("tr");
+        Object.values(result).forEach(value => {
+            const td = document.createElement("td");
+            td.style.border = "1px solid #ddd";
+            td.style.padding = "8px";
+            td.textContent = typeof value === "object" ? JSON.stringify(value) : value;
+            row.appendChild(td);
+        });
+        table.appendChild(row);
+    });
+
+    outputContent.appendChild(table);
+}
+
+// Handle file upload
+fileInput.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
     const reader = new FileReader();
-    reader.onload = function (e) {
-        const csvString = e.target.result;
-        handleCSVInput(csvString, file.name);
-    };
-    reader.onerror = function () {
-        console.error('Error reading file:', file.name);
-        showToast('Error reading file!', 'error');
+    reader.onload = async (event) => {
+        try {
+            showLoadingOverlay("Processing CSV...");
+            const csvString = event.target.result;
+            const { model, display, data } = processCSVForModel(csvString);
+            currentEndpoint = MODELS[model].endpoint;
+            bulkResults.model = model;
+            bulkResults.display = display;
+            bulkResults.results = [];
+            bulkResults.summary = { confirmed: 0, candidate: 0, "false positive": 0 };
+
+            for (let i = 0; i < data.length; i++) {
+                const rowObj = data[i];
+                if (!rowObj.isValid) continue;
+                const prediction = await queryHuggingFace(model, rowObj.row);
+                const parsed = parsePrediction(prediction, rowObj.row, rowObj.index);
+                bulkResults.results.push(parsed);
+                if (parsed.label.toLowerCase() in bulkResults.summary) {
+                    bulkResults.summary[parsed.label.toLowerCase()] += 1;
+                }
+            }
+
+            hideLoadingOverlay();
+            displayResults(bulkResults.results);
+            showToast(`Finished processing CSV with model: ${display}`, "success");
+        } catch (err) {
+            hideLoadingOverlay();
+            console.error(err);
+            showToast(err.message, "error");
+        }
     };
     reader.readAsText(file);
-}
+});
 
-function bindSliderToValue(sliderId, valueId) {
-    const slider = document.getElementById(sliderId);
-    const valueSpan = document.getElementById(valueId);
-
-    if (slider && valueSpan) {
-        valueSpan.textContent = slider.value;
-        slider.addEventListener("input", () => {
-            valueSpan.textContent = slider.value;
-        });
-    }
-}
-
-// Bind sliders
-bindSliderToValue("nEstimators", "nEstimatorsValue");
-bindSliderToValue("numLeaves", "numLeavesValue");
-
-// Apply button event
-const applyBtn = document.getElementById("applyParamsBtn");
-if (applyBtn) {
-    applyBtn.addEventListener("click", async () => {
-        const params = {
-            n_estimators: parseInt(document.getElementById("nEstimators").value),
-            learning_rate: parseFloat(document.getElementById("learningRate").value),
-            num_leaves: parseInt(document.getElementById("numLeaves").value),
-            max_depth: parseInt(document.getElementById("maxDepth").value),
-            // reg_alpha and reg_lambda are ignored as they are not part of the API
-        };
-
-        console.log("Applying Hyperparameters:", params);
-
-        if (!currentEndpoint) {
-            showToast("No model selected. Please upload data first.", 'error');
-            return;
-        }
-
-        if (useGradio && Client) {
-            try {
-                const client = await Client.connect(currentEndpoint, {
-                    hf_token: HF_API_TOKEN
-                });
-                const result = await client.predict("/update_hyperparams", {
-                    num_leaves: params.num_leaves,
-                    max_depth: params.max_depth,
-                    learning_rate: params.learning_rate,
-                    n_estimators: params.n_estimators,
-                });
-                showToast(`Model updated successfully! ${result}`, 'success');
-            } catch (error) {
-                console.error('Error updating hyperparameters:', error);
-                showToast('Failed to update model hyperparameters.', 'error');
-            }
-        } else {
-            showToast('Gradio client not available. Cannot update hyperparameters.', 'error');
-        }
+// Sample button handlers
+sampleBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+        const sampleKey = btn.dataset.sample;
+        if (!SAMPLE_CSV[sampleKey]) return;
+        fileInput.value = null; // Reset
+        const blob = new Blob([SAMPLE_CSV[sampleKey]], { type: "text/csv" });
+        const fakeFile = new File([blob], `${sampleKey}.csv`, { type: "text/csv" });
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(fakeFile);
+        fileInput.files = dataTransfer.files;
+        const event = new Event("change");
+        fileInput.dispatchEvent(event);
     });
-}
+});
+
+// Navigation buttons
+getStartedBtn?.addEventListener("click", () => {
+    homeContent.style.display = "none";
+    dashboardContent.style.display = "block";
+});
+
+backBtn?.addEventListener("click", () => {
+    dashboardContent.style.display = "none";
+    homeContent.style.display = "block";
+});
+
+learnMoreBtn?.addEventListener("click", () => {
+    dashboardContent.style.display = "none";
+    aboutContent.style.display = "block";
+});
+
+aboutBackBtn?.addEventListener("click", () => {
+    aboutContent.style.display = "none";
+    dashboardContent.style.display = "block";
+});
+
+// Initialize Gradio client on load
+initializeGradioClient();
